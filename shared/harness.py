@@ -52,6 +52,17 @@ def base_features(df):
         X[c] = _num(df[c])
     X["house_area"] = df["house_area"].map(_area)
     X["area_is_range"] = df["house_area"].astype(str).str.contains("-").astype(int)
+    # Frozen row-local geometry/range package (experiment branch only).
+    bounds = df["house_area"].astype(str).str.findall(r"\d+\.?\d*")
+    X["area_low"] = bounds.map(lambda v: float(v[0]) if v else np.nan)
+    X["area_high"] = bounds.map(lambda v: float(v[-1]) if v else np.nan)
+    X["area_width"] = X["area_high"] - X["area_low"]
+    X["log_area"] = np.log(X["house_area"].clip(lower=1))
+    X["lot_area"] = X["lot_front"] * X["lot_depth"]
+    X["log_lot_area"] = np.log(X["lot_area"].clip(lower=1))
+    X["lot_missing_or_zero"] = (X["lot_area"].isna() | (X["lot_area"] <= 0)).astype(int)
+    X["area_per_bed"] = X["house_area"] / X["bedrooms"].clip(lower=1)
+    X["area_per_bath"] = X["house_area"] / X["washrooms"].clip(lower=1)
     X["t_listed"] = (df["date_listed"] - T0).dt.days / 30.44
     X["list_month"] = df["date_listed"].dt.month
     for c in CATS: X[c] = df[c].astype("category")

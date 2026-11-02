@@ -61,8 +61,8 @@ def kw_feats(df):
     return X
 
 # ---------------- comps ----------------
-COMP_LEVEL = ["rep_lp", "bld_lp", "bld_ppsf", "bld_est", "bldbed_lp", "match_lp", "match_ppsf", "match_est", "comm_lp", "comm_ppsf", "knn_lp", "knn_ppsf", "knn_est"]
-COMP_OTHER = ["rep_age", "rep_n_all", "bld_n", "bld_age", "match_n", "match_dist", "comm_n", "knn_dist"]
+COMP_LEVEL = ["rep_lp", "bld_lp", "bld_ppsf", "bld_est", "bldbed_lp", "comm_lp", "comm_ppsf", "knn_lp", "knn_ppsf", "knn_est"]
+COMP_OTHER = ["rep_age", "rep_n_all", "bld_n", "bld_age", "comm_n", "knn_dist"]
 
 def comps_train_role():
     """Leak-safe training-role comps using only months complete before listing.

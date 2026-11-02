@@ -111,39 +111,6 @@ def build(hist, query, ref, idx, K=10):
                    ["dlp"], "med", "bb", maxn=10)
     F["bldbed_lp"] = r["bb_dlp"] + lvl
 
-    # Same-building units matched on physical structure.  This is deliberately
-    # separate from the broad building median: only strictly earlier sales of
-    # the same property type are candidates, and the fixed distance gives area
-    # the most weight.  Requiring three candidates avoids unstable one-unit
-    # pseudo-comparables.
-    for c in ["match_lp", "match_ppsf", "match_est", "match_n", "match_dist"]: F[c] = np.nan
-    hmatch = h.key + "#" + h.htype
-    qmatch = q.key + "#" + q.htype
-    hgroups, qgroups = {}, {}
-    for i, group in enumerate(hmatch): hgroups.setdefault(group, []).append(i)
-    for i, group in enumerate(qmatch): qgroups.setdefault(group, []).append(i)
-    hbath, qbath = _num(hist.washrooms).values, _num(query.washrooms).values
-    hpark, qpark = _num(hist.parking_total).values, _num(query.parking_total).values
-    hgarage, qgarage = _num(hist.garage).values, _num(query.garage).values
-    for group, qmembers in qgroups.items():
-        qi = np.asarray(qmembers); hi = np.asarray(hgroups.get(group, []))
-        if len(hi) < 3: continue
-        for j in qi:
-            eligible = hi[h.d.values[hi] < rd[j]]
-            if len(eligible) < 3: continue
-            qa = max(q.area.iloc[j], 1.0)
-            dist = (np.abs(np.log(np.maximum(h.area.iloc[eligible].values, 1.0) / qa))
-                    + .35 * np.abs(h.beds.iloc[eligible].values - q.beds.iloc[j])
-                    + .35 * np.abs(hbath[eligible] - qbath[j])
-                    + .20 * np.abs(hpark[eligible] - qpark[j])
-                    + .20 * np.abs(hgarage[eligible] - qgarage[j]))
-            take = np.argsort(dist, kind="stable")[:10]
-            use = eligible[take]
-            F.loc[j, "match_n"] = len(use); F.loc[j, "match_dist"] = np.median(dist[take])
-            F.loc[j, "match_lp"] = np.median(h.dlp.iloc[use]) + lvl[j]
-            F.loc[j, "match_ppsf"] = np.median(h.dppsf.iloc[use]) + lvl[j]
-            F.loc[j, "match_est"] = F.loc[j, "match_ppsf"] + np.log(q.area.iloc[j])
-
     # (d) community x type, 12-month window, earlier only
     r = grp_lookup(h.comm.values, q.comm.values, ["dlp", "dppsf"], "med", "cm", window=365)
     F["comm_lp"] = r["cm_dlp"] + lvl; F["comm_ppsf"] = r["cm_dppsf"] + lvl; F["comm_n"] = r["cm_n"]
