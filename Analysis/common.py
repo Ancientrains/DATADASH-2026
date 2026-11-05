@@ -114,6 +114,11 @@ def _cat(series: pd.Series) -> np.ndarray:
     return series.astype("object").where(series.notna(), "Missing").astype(str).values
 
 
+def _key_part(series: pd.Series) -> pd.Series:
+    """String form of a column for entity keys.  Missing -> 'NA' explicitly (pandas 3's astype(str) would keep NaN)."""
+    return pd.Series(series.astype("object").where(series.notna(), "NA").astype(str).values, index=series.index)
+
+
 # ------------------------------------------------------------------------------------------------
 # Cleaning
 # ------------------------------------------------------------------------------------------------
@@ -145,11 +150,12 @@ def clean(df: pd.DataFrame, required) -> pd.DataFrame:
     o["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
 
     # entity keys: ml_num is a transaction id; building = exact coordinate, unit = coordinate + physical identity
-    ck = o["latitude"].round(6).astype(str) + "|" + o["longitude"].round(6).astype(str)
+    ck = _key_part(o["latitude"].round(6)) + "|" + _key_part(o["longitude"].round(6))
     nocoord = o["latitude"].isna() | o["longitude"].isna()
     o["coord_key"] = np.where(nocoord, "NOCOORD_" + o["ml_num"], ck)
     o["unit_key"] = (o["coord_key"] + "|" + o["house_type_name"] + "|" + o["house_style"] + "|"
-                     + df["bedrooms"].astype(str) + "|" + df["washrooms"].astype(str) + "|" + df["house_area"].astype(str))
+                     + _key_part(df["bedrooms"]) + "|" + _key_part(df["washrooms"]) + "|" + _key_part(df["house_area"]))
+    assert not o["coord_key"].isna().any() and not o["unit_key"].isna().any(), "entity keys must never be missing"
     o["seg_id"] = o["house_type_name"].isin(CONDO).astype(np.int8)      # 1 = condo, 0 = free(hold)
 
     # text

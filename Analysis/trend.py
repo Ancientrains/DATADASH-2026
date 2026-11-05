@@ -44,8 +44,8 @@ def cal_month(m):
 # Mix controls
 # ------------------------------------------------------------------------------------------------
 def hedonic_controls(df: pd.DataFrame):
-    """Sparse design of mix controls (no month terms).  Only structural attributes are used; the choice of which
-    categorical levels get a column uses level counts only (no prices)."""
+    """Sparse design of mix controls (no month terms) built from the rows passed in.  Only structural attributes
+    are used, never prices.  For the as-of index it is called on exactly the rows a vintage may see."""
     num = pd.DataFrame({"log_sqft": np.log(df["sqft"]), "bed": df["bedrooms_n"], "bath": df["washrooms_n"],
                         "park": df["parking_n"], "garage": df["garage_n"], "log_lot": np.log1p(df["lot_area"])})
     blocks = []
@@ -75,13 +75,15 @@ def _solve(X: sp.csr_matrix, y: np.ndarray) -> np.ndarray:
     return np.linalg.solve(A, X.T @ y)
 
 
-def _month_effects(D: sp.csr_matrix, y: np.ndarray, m: np.ndarray, v: int) -> np.ndarray:
-    """Log index for months 0..v-1 from the sales in months < v (rows of D / y / m)."""
+def _month_effects(sub: pd.DataFrame, y: np.ndarray, m: np.ndarray, v: int) -> np.ndarray:
+    """Log index for months 0..v-1 from the sales `sub` (all in months < v).  The mix controls are built from these
+    rows only, so imputation medians, scaling and the set of categorical levels never see later sales."""
     cnt = np.bincount(m, minlength=v)
     ok = cnt[m] >= MIN_MONTH_N
     if cnt[0] < MIN_MONTH_N:
         raise ValueError("base month has too few sales in this segment")
-    D, y, m = D[ok], y[ok], m[ok]
+    sub, y, m = sub[ok], y[ok], m[ok]
+    D = hedonic_controls(sub)
     X = sp.hstack([sp.csr_matrix(np.ones((len(y), 1))), D, _month_dummies(m, v)], format="csr")
     beta = _solve(X, y)
     eff = np.r_[0.0, beta[-(v - 1):]]
@@ -99,14 +101,13 @@ def fit_vintage_index(train: pd.DataFrame, last_vintage: int | None = None, verb
     if last_vintage is None:
         last_vintage = int(m.max()) + 1
     y = np.log(train["sold_price"].to_numpy(dtype=float))
-    D = hedonic_controls(train)
     s = train["seg_id"].to_numpy()
     V = np.full((2, last_vintage + 1, last_vintage + 1), np.nan)
     for sg in (0, 1):
         rows = np.where(s == sg)[0]
         for v in range(MIN_VINTAGE, last_vintage + 1):
             r = rows[m[rows] < v]
-            V[sg, v, :v] = _month_effects(D[r], y[r], m[r], v)
+            V[sg, v, :v] = _month_effects(train.iloc[r], y[r], m[r], v)
         if verbose:
             print(f"  index fitted for segment {'condo' if sg else 'free'}: vintages {MIN_VINTAGE}..{last_vintage}")
     return V
@@ -183,4 +184,5 @@ def realised_window_index(V: np.ndarray, cutoff: pd.Timestamp, horizon: int = TE
     vl = V.shape[1] - 1
     if v0 + horizon > vl:
         return np.array([np.nan, np.nan])
-    return np.array([V[sg, vl, v0:v0 + horizon].mean() for sg in (0, 1)])
+    return np.array([V[sg, vl, v0:v0 + horizon].mean() for sg in (0, 1)])\
+    
