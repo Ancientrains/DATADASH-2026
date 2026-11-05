@@ -11,11 +11,11 @@
 """
 from common import *
 
-def comps_for(fold, track, te):
+def comps_for(fold, track, te, tr):
     if fold == "REAL":
-        F = comps_test_role(None, None, CUTS["REAL"], "test_off_market" if track == "off_market" else "test_list_aware")
+        F = comps_test_role(tr, te, CUTS["REAL"], "test_off_market" if track == "off_market" else "test_list_aware")
     else:
-        F = comps_test_role(None, None, CUTS[fold], "blk")
+        F = comps_test_role(tr, te, CUTS[fold], "blk")
     return F
 
 def block_start(dates, cut, months=4):
@@ -36,7 +36,7 @@ def build_X(tr, te, cut, fold, track, cfg, te_comps=None):
     if cfg.get("comps"):
         lf = cfg["comps"] == "lf"
         A = comps_frame(tr.ml_num.values, comps_train_role(), lf)
-        B = comps_frame(te.ml_num.values, te_comps if te_comps is not None else comps_for(fold, track, te), lf)
+        B = comps_frame(te.ml_num.values, te_comps if te_comps is not None else comps_for(fold, track, te, tr), lf)
         assert B.index.equals(Xte.index) and A.index.equals(Xtr.index)
         Xtr = pd.concat([Xtr, A], axis=1); Xte = pd.concat([Xte, B], axis=1)
     if cfg.get("age"):

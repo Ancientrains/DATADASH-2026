@@ -25,7 +25,7 @@ _cache = {}
 
 def load(name="listings"):
     if name not in _cache:
-        d = pd.read_parquet(f"{DATA}/{name}.parquet")
+        d = pd.read_parquet(f"../{DATA}/{name}.parquet")
         for c in ("date_listed", "date_sold", "external_avm_estimate_date"):
             if c in d: d[c] = pd.to_datetime(d[c])
         _cache[name] = d
