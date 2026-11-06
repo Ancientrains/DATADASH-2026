@@ -8,11 +8,27 @@ import os
 import shutil
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 from check_submission import check_all
 
 ROOT = Path(__file__).parent
+
+def validate():
+    env = dict(os.environ)
+    env.setdefault("DATADASH_DATA", str(ROOT / "data"))
+    env.setdefault("INTEGRATE_WORK", str(ROOT / ".work"))
+    subprocess.run([sys.executable, "-c", "from official_validate import run; from pathlib import Path; run(Path('../outputs/validation_predictions.csv'))"], cwd=ROOT / "integrate", env=env, check=True)
+
+def report():
+    p = pd.read_csv(ROOT / "outputs" / "validation_predictions.csv")
+    out = {}
+    for track, d in p.groupby("track"):
+        e = (d.predicted_price - d.sold_price) / d.sold_price * 100
+        out[track] = {"n": len(d), "MdAPE": round(float(e.abs().median()), 2), "MAPE": round(float(e.abs().mean()), 2), "MdSE": round(float(e.median()), 2)}
+    (ROOT / "outputs" / "validation_metrics.json").write_text(json.dumps(out, indent=2) + "\n")
+    print(json.dumps(out, indent=2))
 
 
 def predict():
@@ -32,7 +48,7 @@ def check():
     return check_all(ROOT / "submissions")
 
 
-COMMANDS = {"predict": predict, "check": check}
+COMMANDS = {"validate": validate, "report": report, "predict": predict, "check": check}
 if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in COMMANDS:
         raise SystemExit(__doc__)
