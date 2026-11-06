@@ -1,6 +1,8 @@
-"""Run final predictions or check submission files.
+"""Run validation, reports, predictions, or submission checks.
 
 Usage:
+    python run.py validate
+    python run.py report
     python run.py predict
     python run.py check
 """
