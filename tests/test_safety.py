@@ -13,7 +13,7 @@ import pipeline
 
 
 def test_off_market_feature_path_drops_list_price(monkeypatch):
-    monkeypatch.setattr(pipeline, "base_features", lambda df: pd.DataFrame(index=df.index))
+    monkeypatch.setattr(pipeline, "base_features", lambda df: pd.DataFrame({"list_price": df.list_price.values}, index=df.index))
     monkeypatch.setattr(pipeline, "align", lambda train, test: (train, test))
     train = pd.DataFrame({"ml_num": ["A"], "list_price": [100]})
     test = pd.DataFrame({"ml_num": ["B"], "list_price": [200]})

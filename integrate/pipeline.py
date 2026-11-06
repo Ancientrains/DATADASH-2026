@@ -31,6 +31,10 @@ def stage1_lookup(name, ml):
 
 def build_X(tr, te, cut, fold, track, cfg, te_comps=None):
     Xtr, Xte = align(base_features(tr), base_features(te))
+    if track == "off_market":
+        # Defensive guard: list price is never a valid off-market feature.
+        Xtr = Xtr.drop(columns="list_price", errors="ignore")
+        Xte = Xte.drop(columns="list_price", errors="ignore")
     if cfg.get("kw"):
         Xtr = Xtr.join(kw_feats(tr)); Xte = Xte.join(kw_feats(te))
     if cfg.get("comps"):
