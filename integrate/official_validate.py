@@ -8,7 +8,7 @@ from common import CACHE, LA_COLS, OFF_COLS, comps_test_role, load
 from pipeline import predict
 from run_off import OFF
 from run_la import LA
-from stage1 import run_stage1
+from stage1 import STAGE1, run_stage1
 
 MONTHS = pd.period_range("2025-12", "2026-05", freq="M")
 
@@ -36,7 +36,9 @@ def run(output):
         # A current-cut off-market estimate for list-aware test rows; training
         # rows retain their earlier-block stage-one estimates from `stage`.
         stage_name = f"official_{month}"
-        current = pd.DataFrame({"ml_num": la_te.ml_num, "om_log": np.log(p_off)})
+        # Match stage1.py: stack features are single-seed off-market estimates.
+        p_stage = predict(tr, off_te, cut, "REAL", "off_market", STAGE1["best"], te_comps=off_comps)
+        current = pd.DataFrame({"ml_num": la_te.ml_num, "om_log": np.log(p_stage)})
         pd.concat([stage, current]).drop_duplicates("ml_num", keep="last").to_parquet(Path(CACHE) / f"stage1_{stage_name}.parquet")
         cfg = dict(LA["+kw+comps_raw+stack(best)+3s"], stack=stage_name)
         p_la = ensemble(tr, la_te, cut, "list_aware", cfg, la_comps)
