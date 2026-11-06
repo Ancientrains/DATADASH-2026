@@ -13,6 +13,8 @@ import sys
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from check_submission import check_all
 
 ROOT = Path(__file__).parent
@@ -20,7 +22,11 @@ ROOT = Path(__file__).parent
 def validate():
     env = dict(os.environ)
     env.setdefault("DATADASH_DATA", str(ROOT / "data"))
-    env.setdefault("INTEGRATE_WORK", str(ROOT / ".work"))
+    # Keep official validation separate from prediction/experiment caches.
+    work = ROOT / ".work" / "official_validation"
+    if work.exists(): shutil.rmtree(work)
+    work.mkdir(parents=True)
+    env["INTEGRATE_WORK"] = str(work)
     subprocess.run([sys.executable, "-c", "from official_validate import run; from pathlib import Path; run(Path('../outputs/validation_predictions.csv'))"], cwd=ROOT / "integrate", env=env, check=True)
 
 def report():

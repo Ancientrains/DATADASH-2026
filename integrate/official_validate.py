@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from common import CACHE, CUTS, LA_COLS, OFF_COLS, comps_test_role, load
+from common import CACHE, LA_COLS, OFF_COLS, comps_test_role, load
 from pipeline import predict
 from run_off import OFF
 from run_la import LA
