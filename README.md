@@ -37,7 +37,7 @@ Validation is walk-forward. Each month from December 2025 to May 2026 is predict
 
 ## Results
 
-Reported on the starter's walk-forward validation (December 2025 to May 2026). MdAPE is the median of |predicted − sold| / sold, and MAPE is the mean.
+Reported on our monthly walk-forward validation (December 2025 to May 2026). MdAPE is the median of |predicted − sold| / sold, and MAPE is the mean. See [validation details](VALIDATION_RESULTS.md).
 
 | Track | Model | MdAPE | MAPE |
 |---|---|---|---|
@@ -49,8 +49,9 @@ Reported on the starter's walk-forward validation (December 2025 to May 2026). M
 
 To earn accuracy points on a track, hidden-test MdAPE must beat the maximum-error baseline, which the starter's off-market baseline does not.
 
-Our results use 10,069 held-out homes across the December 2025 to May 2026
-walk-forward blocks. These are validation results, not hidden-test scores.
+Our results use 10,069 distinct held-out homes per track across the December
+2025 to May 2026 walk-forward blocks. These are validation results, not
+hidden-test scores.
 
 ## Error analysis
 
