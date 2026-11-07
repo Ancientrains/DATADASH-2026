@@ -13,7 +13,7 @@ import pandas as pd
 # ------------------------------------------------------------------------------------------------
 # Paths / protocol constants
 # ------------------------------------------------------------------------------------------------
-DATA_DIR = Path("data")
+DATA_DIR = Path("../data")
 TRAIN_CSV = DATA_DIR / "listings.csv"
 TEST_LIST_AWARE_CSV = DATA_DIR / "test_list_aware.csv"
 TEST_OFF_MARKET_CSV = DATA_DIR / "test_off_market.csv"
