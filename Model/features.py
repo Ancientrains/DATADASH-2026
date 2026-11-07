@@ -26,7 +26,7 @@ OFF_MARKET_FEATS = PHYS_NUM + TEXT_FEATS + CAT_COLS + LEVEL_FREE_FEATS
 LIST_AWARE_BASE_FEATS = (PHYS_NUM + TEXT_FEATS + CAT_COLS + RAW_FEATS + ["bld_n", "bld_age", "rep_age", "comm_n"]
                          + (["mkt_lr"] if LIST_MARKET_RATIO else []))
 BASE_COLS = PHYS_NUM + TEXT_FEATS + CAT_COLS
-META_COLS = ["ml_num", "sold_price", "list_price", "date_listed", "date_sold", "seg_id"]
+META_COLS = ["ml_num", "sold_price", "list_price", "date_listed", "date_sold", "seg_id", "remarks"]
 
 
 @dataclass

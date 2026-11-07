@@ -29,6 +29,7 @@ BLOCK_SEEDS = (0,)                 # seeds for the out-of-time stage-1 blocks th
 TUNE_WEIGHTS = (0.5, 0.5)          # tuning score = w1 * MdAPE + w2 * MAPE (mean over folds)
 CHECKPOINTS = (200, 400, 700, 1000, 1500, 2000)
 LIST_FEATS = LIST_AWARE_BASE_FEATS + ["log_list", "om_log", "gap"]
+TEXT_B_COLS = [f"la_tfidf_{i}" for i in range(8)]
 
 DEFAULT_OFF = dict(objective="regression", learning_rate=0.05, num_leaves=63, min_child_samples=40, feature_fraction=0.8,
                    bagging_fraction=0.8, bagging_freq=1, lambda_l2=5.0, n_rounds=800)
@@ -140,25 +141,63 @@ def stage1_blocks(train, V, comps_all, params, seeds=BLOCK_SEEDS, max_start=None
 # ------------------------------------------------------------------------------------------------
 # stage 2
 # ------------------------------------------------------------------------------------------------
-def list_features(X_full: pd.DataFrame, list_price, om_log) -> pd.DataFrame:
+def _text_a(remarks) -> pd.DataFrame:
+    text = pd.Series(remarks).fillna("").astype(str).str.lower()
+    return pd.DataFrame({f"la_text_{k}": text.str.contains(p, regex=True).astype("int8")
+                         for k, p in C.LA_TEXT_RULES.items()})
+
+
+def fit_list_text_encoder(remarks, mode: str):
+    """Fit only on eligible stage-2 training text; SVD is sparse-TFIDF PCA."""
+    if mode not in C.LIST_TEXT_MODES:
+        raise ValueError(f"unknown list text mode: {mode}")
+    if "b" not in mode:
+        return None
+    from sklearn.decomposition import TruncatedSVD
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    docs = pd.Series(remarks).fillna("").astype(str)
+    vec = TfidfVectorizer(ngram_range=(1, 2), min_df=3, max_features=4000, sublinear_tf=True)
+    try:
+        mat = vec.fit_transform(docs)
+    except ValueError:                         # empty vocabulary in a tiny smoke-test fold
+        return None
+    n = min(len(TEXT_B_COLS), mat.shape[0] - 1, mat.shape[1] - 1)
+    if n < 1:
+        return None
+    svd = TruncatedSVD(n_components=n, random_state=0)
+    svd.fit(mat)
+    return vec, svd
+
+
+def list_features(X_full: pd.DataFrame, list_price, om_log, remarks=None, text_mode="none", text_encoder=None) -> pd.DataFrame:
     X = X_full[LIST_AWARE_BASE_FEATS].copy()
     X["log_list"] = np.log(np.asarray(list_price, float))
     X["om_log"] = np.asarray(om_log, float)
     X["gap"] = X["log_list"] - X["om_log"]
-    return X[LIST_FEATS]
+    if "a" in text_mode:
+        X = pd.concat([X, _text_a(remarks).set_axis(X.index)], axis=1)
+    if "b" in text_mode:
+        vals = np.zeros((len(X), len(TEXT_B_COLS)))
+        if text_encoder is not None:
+            vec, svd = text_encoder
+            z = svd.transform(vec.transform(pd.Series(remarks).fillna("").astype(str)))
+            vals[:, :z.shape[1]] = z
+        X[TEXT_B_COLS] = vals
+    return X
 
 
-def list_training(fr, om_all: np.ndarray):
+def list_training(fr, om_all: np.ndarray, text_mode="none"):
     """Stage-2 training set: training rows that have an out-of-time stage-1 valuation."""
     om = om_all[fr.pos_tr]
     ok = np.where(~np.isnan(om) & (fr.meta_tr["list_price"].to_numpy() > 0))[0]
-    X = list_features(fr.X_tr.iloc[ok], fr.meta_tr["list_price"].to_numpy()[ok], om[ok])
+    remarks = fr.meta_tr["remarks"].iloc[ok].reset_index(drop=True)
+    X = list_features(fr.X_tr.iloc[ok], fr.meta_tr["list_price"].to_numpy()[ok], om[ok], remarks, text_mode)
     y = np.log(fr.meta_tr["sold_price"].to_numpy()[ok] / fr.meta_tr["list_price"].to_numpy()[ok])
-    return X.reset_index(drop=True), y
+    return X.reset_index(drop=True), y, remarks
 
 
 def stage2_fit(X, y, params, seeds):
-    C.assert_no_leak(LIST_FEATS, "list_aware")
+    C.assert_no_leak(X.columns, "list_aware")
     return [fit_lgb(X, y, params, s) for s in seeds]
 
 
@@ -169,7 +208,7 @@ def stage2_predict(models, X) -> np.ndarray:
 # ------------------------------------------------------------------------------------------------
 # validation (horizon-matched single-fit folds)
 # ------------------------------------------------------------------------------------------------
-def validate(folds=None, seeds=C.SEEDS, do_list=True, quiet=False):
+def validate(folds=None, seeds=C.SEEDS, do_list=True, quiet=False, list_text="none"):
     train = C.load_train()
     from trend import get_vintage_index
     V = get_vintage_index(train)
@@ -195,9 +234,15 @@ def validate(folds=None, seeds=C.SEEDS, do_list=True, quiet=False):
         pred_la = None
         if do_list:
             om_all = stage1_blocks(train, V, comps_all, p_off, max_start=cutoff - pd.DateOffset(months=C.TEST_MONTHS))
-            Xl, yl = list_training(fr, om_all)
+            Xl, yl, text_tr = list_training(fr, om_all, list_text)
+            enc = fit_list_text_encoder(text_tr, list_text)
+            if "b" in list_text and enc is not None:
+                vec, svd = enc
+                z = svd.transform(vec.transform(text_tr))
+                Xl.loc[:, TEXT_B_COLS] = 0.0
+                Xl.loc[:, TEXT_B_COLS[:z.shape[1]]] = z
             models2 = stage2_fit(Xl, yl, p_list, seeds)
-            Xq = list_features(fr.X_q, list_price, lp_off)
+            Xq = list_features(fr.X_q, list_price, lp_off, fr.meta_q["remarks"], list_text, enc)
             pred_la = list_price * np.exp(stage2_predict(models2, Xq))
             rows.append(dict(fold=name, model="list-aware (3 seeds)", **price_metrics(actual, pred_la)))
             print(f"  list-aware trained on {len(Xl):,} rows with an out-of-time stage-1 valuation")
@@ -258,7 +303,7 @@ def tune(kind: str, n_iter: int = 30, seed: int = 0):
         if kind == "list_aware":
             lp = stage1_predict(stage1_fit(fr, p_off, (0,)), fr.X_q, fr.addback_q)
             om_all = stage1_blocks(train, V, comps_all, p_off, max_start=cutoff - pd.DateOffset(months=C.TEST_MONTHS), verbose=False)
-            Xl, yl = list_training(fr, om_all)
+            Xl, yl, text_tr = list_training(fr, om_all)
             lst = fr.meta_q["list_price"].to_numpy()
             item.update(Xl=Xl, yl=yl, Xq=list_features(fr.X_q, lst, lp), list=lst)
         folds.append(item)

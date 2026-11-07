@@ -14,5 +14,10 @@ Order of use
     python run.py check                               # leakage / OOT / determinism / submission checks
 
 Add --fast to any run.py command for a smoke test (tiny rounds; does not write params).
+For list-aware text ablations, add `--list-text a`, `--list-text b`, or
+`--list-text ab`; the default `none` preserves the baseline. Option A adds
+row-local rule flags. Option B fits TF-IDF plus deterministic TruncatedSVD only
+on eligible historical stage-2 rows for each fold/final fit. These options never
+enter the off-market model.
 Commit params/*.json so judges reproduce the tuned models.  Delete cache/ to force recomputation.
 Constants to confirm: ID_COL / PRED_COL / submission file names (common.py), FIX_ORIGINAL_PATTERN, TUNE_WEIGHTS, BLOCK_SEEDS.

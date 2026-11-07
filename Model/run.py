@@ -24,7 +24,7 @@ def _write(df_ids: pd.Series, price: np.ndarray, path):
     print(f"  wrote {path}  ({len(out):,} rows, median {out[C.PRED_COL].median():,.0f}, mean {out[C.PRED_COL].mean():,.0f})")
 
 
-def predict():
+def predict(list_text="none"):
     train = C.load_train()
     V = get_vintage_index(train)
     comps_all = train_comps(train, V)
@@ -43,11 +43,15 @@ def predict():
     fl = build_frames(train, la, cutoff, V, comps_all=comps_all)
     lp_la = M.stage1_predict(models1, fl.X_q, fl.addback_q)
     om_all = M.stage1_blocks(train, V, comps_all, p_off, max_start=cutoff - pd.DateOffset(months=C.TEST_MONTHS))
-    Xl, yl = M.list_training(fl, om_all)
+    Xl, yl, text_tr = M.list_training(fl, om_all, list_text)
+    enc = M.fit_list_text_encoder(text_tr, list_text)
+    if "b" in list_text and enc is not None:
+        vec, svd = enc; z = svd.transform(vec.transform(text_tr))
+        Xl.loc[:, M.TEXT_B_COLS] = 0.0; Xl.loc[:, M.TEXT_B_COLS[:z.shape[1]]] = z
     print(f"  stage 2 trained on {len(Xl):,} rows with an out-of-time stage-1 valuation")
     models2 = M.stage2_fit(Xl, yl, p_list, C.SEEDS)
     list_price = la["list_price"].to_numpy(dtype=float)
-    ratio = np.exp(M.stage2_predict(models2, M.list_features(fl.X_q, list_price, lp_la)))
+    ratio = np.exp(M.stage2_predict(models2, M.list_features(fl.X_q, list_price, lp_la, fl.meta_q["remarks"], list_text, enc)))
     _write(la["ml_num"], list_price * ratio, C.SUBMISSION_LIST_AWARE)
 
     # --- sold/list sanity (sold prices of the test rows are hidden) ---------------------------------------
@@ -119,14 +123,15 @@ def main(argv=None):
     ap.add_argument("--stage", choices=["off_market", "list_aware"], default="off_market", help="what to tune")
     ap.add_argument("--n-iter", type=int, default=30)
     ap.add_argument("--fast", action="store_true", help="tiny boosting rounds: smoke test only")
+    ap.add_argument("--list-text", choices=C.LIST_TEXT_MODES, default="none", help="list-aware text mode: none, a, b, or ab")
     a = ap.parse_args(argv)
     M.FAST = a.fast
     if a.command == "validate":
-        M.validate(a.folds, do_list=not a.no_list)
+        M.validate(a.folds, do_list=not a.no_list, list_text=a.list_text)
     elif a.command == "tune":
         M.tune(a.stage, a.n_iter)
     elif a.command == "predict":
-        predict()
+        predict(a.list_text)
     else:
         sys.exit(check())
 

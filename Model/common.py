@@ -105,6 +105,17 @@ COND_WEIGHTS = {"luxury": 0.070, "updated": 0.028, "stunning": 0.022, "renovated
 
 TEXT_FEATS = KW_COLS + ["kw_cond_score", "kw_n", "kw_cond_x_logsqft", "kw_cond_x_condo", "kw_lux_x_logsqft"]
 
+# List-aware-only text options.  These never enter the off-market feature list.
+LIST_TEXT_MODES = ("none", "a", "b", "ab")
+LA_TEXT_RULES = {
+    "urgency": r"motivated seller|bring all offers|quick closing|must sell|priced to sell",
+    "fixer": r"as[- ]is|handyman|fixer|contractor special|needs (?:work|tlc)|renovator",
+    "premium": r"sub[- ]zero|wolf appliance|custom millwork|marble|quartz|smart home",
+    "scarcity": r"offer date|rarely available|one of a kind|architectural masterpiece",
+    "tenant": r"tenanted|tenant occupied|rental income|currently leased",
+}
+LIST_TEXT_A_COLS = [f"la_text_{k}" for k in LA_TEXT_RULES]
+
 
 # ------------------------------------------------------------------------------------------------
 # Parsing helpers
@@ -182,6 +193,7 @@ def clean(df: pd.DataFrame, required) -> pd.DataFrame:
 
     # text
     txt = df["remarks"].fillna("").astype(str)
+    o["remarks"] = txt                    # metadata only; never a stage-1 feature
     o["remarks_len"] = txt.str.len().astype(float)
     low = txt.str.lower()
     for k, pat in KW.items():
