@@ -69,4 +69,23 @@ try:
     C.assert_no_leak(OFF_MARKET_FEATS + ["list_price"], "off_market"); raise SystemExit("guard failed")
 except AssertionError as e:
     print("[5] leakage guard raises on list_price in off-market:", str(e)[:70])
+# 6. training-row comps do not depend on the cutoff (cached all-history pass == cutoff-restricted pass)
+from features import train_comps
+allc = train_comps(train, V)
+sub = tr.iloc[rows[:150]]
+restricted = build_comp_features(tr, sub, sub["date_listed"], V)
+pos = train.index[train.ml_num.isin(sub.ml_num)]
+full = allc.loc[pos].set_index(train.loc[pos, "ml_num"]).loc[sub.ml_num.values].reset_index(drop=True)
+assert np.allclose(full[restricted.columns].to_numpy(), restricted.reset_index(drop=True).to_numpy(), equal_nan=True)
+print("[6] comps of training rows identical with all-history vs cutoff-restricted history: OK")
+# 7. market ratio == brute force, strictly before the reference date
+from comps import market_ratio
+sample = tr.sample(120, random_state=3)
+got = market_ratio(tr, sample["date_listed"], sample["seg_id"])
+exp = []
+for _, r in sample.iterrows():
+    h = tr[(tr.seg_id == r.seg_id) & (tr.date_sold < r.date_listed) & (tr.date_sold >= r.date_listed - pd.Timedelta(days=C.RATIO_DAYS))]
+    exp.append(np.median(np.log(h.sold_price / h.list_price)) if len(h) else np.nan)
+assert np.allclose(got, np.array(exp), equal_nan=True)
+print("[7] trailing sold/list market ratio equals brute force (strictly before the reference date): OK")
 print("ALL PART 1 TESTS PASSED")
