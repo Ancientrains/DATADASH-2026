@@ -1,0 +1,9 @@
+# Runtime dependencies for Model/run.py (validated on Python 3.13).
+lightgbm==4.7.0
+numpy==2.2.3
+pandas==3.0.0
+scikit-learn==1.9.1
+scipy==1.15.2
+
+# Test runner.
+pytest==8.3.5
