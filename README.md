@@ -43,9 +43,9 @@ Reported on the starter's walk-forward validation (December 2025 to May 2026). M
 |---|---|---|---|
 | Both | Maximum error: median sale of same type and neighbourhood, previous 12 months | 17.7% | 22.0% |
 | Off-market | Starter baseline: median of 10 nearest earlier sales | 20.8% | 27.4% |
-| Off-market | **Ours** | 6.82 | 9.23 |
+| Off-market | **Ours** | 6.82% | 9.23% |
 | List-aware | Starter baseline: the list price | 7.3% | 8.1% |
-| List-aware | **Ours** | 3.68 | 4.82 |
+| List-aware | **Ours** | 3.68% | 4.82% |
 
 To earn accuracy points on a track, hidden-test MdAPE must beat the maximum-error baseline, which the starter's off-market baseline does not.
 
