@@ -1,10 +1,4 @@
-"""features.py - assemble model-ready frames for a given cutoff (both tracks share one comps pass).
-
-* Training-row comps depend only on each row's own listing date (all eligible comps sold before it), so they are
-  computed once for every training row and re-used for every cutoff (train_comps, cached on disk).
-* Held-out / test rows get comps referenced to the cutoff, from the history sold before it.
-* Frames carry every column; models select OFF_MARKET_FEATS or the list-aware list (assert_no_leak guards both).
-"""
+"""features.py - assemble model-ready frames for a given cutoff."""
 from __future__ import annotations
 
 import hashlib
@@ -23,20 +17,23 @@ PHYS_NUM = ["sqft", "sqft_is_range", "bedrooms_n", "washrooms_n", "parking_n", "
 CAT_COLS = ["house_type_name", "house_style", "municipality", "community"]
 
 OFF_MARKET_FEATS = PHYS_NUM + TEXT_FEATS + CAT_COLS + LEVEL_FREE_FEATS
-LIST_AWARE_BASE_FEATS = (PHYS_NUM + TEXT_FEATS + CAT_COLS + RAW_FEATS + ["bld_n", "bld_age", "rep_age", "comm_n"]
-                         + (["mkt_lr"] if LIST_MARKET_RATIO else []))
+LIST_AWARE_BASE_FEATS = (
+    PHYS_NUM + TEXT_FEATS + CAT_COLS + RAW_FEATS +
+    ["bld_n", "bld_age", "rep_age", "comm_n", "knn_dist"] +
+    (["mkt_lr"] if LIST_MARKET_RATIO else [])
+)
 BASE_COLS = PHYS_NUM + TEXT_FEATS + CAT_COLS
-META_COLS = ["ml_num", "sold_price", "list_price", "date_listed", "date_sold", "seg_id"]
+META_COLS = ["ml_num", "sold_price", "list_price", "date_listed", "date_sold", "seg_id", "remarks"]
 
 
 @dataclass
 class Frames:
     cutoff: pd.Timestamp
-    X_tr: pd.DataFrame                  # all columns
-    y_tr: np.ndarray                    # off-market target: ln(price) - index(sale month)
-    pos_tr: np.ndarray                  # positions of the training rows inside train_all
+    X_tr: pd.DataFrame
+    y_tr: np.ndarray
+    pos_tr: np.ndarray
     X_q: pd.DataFrame
-    addback_q: np.ndarray               # per-row forecast index to add back
+    addback_q: np.ndarray
     meta_tr: pd.DataFrame = field(default_factory=pd.DataFrame)
     meta_q: pd.DataFrame = field(default_factory=pd.DataFrame)
 
@@ -46,8 +43,6 @@ def data_key(train_all: pd.DataFrame) -> str:
 
 
 def train_comps(train_all: pd.DataFrame, V: np.ndarray) -> pd.DataFrame:
-    """Comps of every training row as of its own listing date (cached).  Valid for any cutoff, because the eligible
-    history of a row sold before the cutoff lies entirely before the cutoff."""
     path = CACHE_DIR / f"train_comps_{data_key(train_all)}_{COMPS_VERSION}.pkl"
     if path.exists():
         return pd.read_pickle(path)
@@ -65,12 +60,11 @@ def categorical_levels(train: pd.DataFrame) -> dict:
 def _apply_cats(X: pd.DataFrame, levels: dict) -> pd.DataFrame:
     X = X.copy()
     for c, lv in levels.items():
-        X[c] = pd.Categorical(X[c].astype(str), categories=lv)         # unseen level -> NaN
+        X[c] = pd.Categorical(X[c].astype(str), categories=lv)
     return X
 
 
 def window_positions(train_all: pd.DataFrame, cutoff: pd.Timestamp) -> np.ndarray:
-    """Positions of the rows sold in [cutoff, cutoff + 4 months)."""
     end = cutoff + pd.DateOffset(months=TEST_MONTHS)
     d = train_all["date_sold"]
     return np.where((d >= cutoff) & (d < end))[0]
@@ -82,7 +76,6 @@ def fold_queries(train_all: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
 
 def build_frames(train_all: pd.DataFrame, queries: pd.DataFrame, cutoff: pd.Timestamp, V: np.ndarray,
                  track=None, verbose: bool = True, comps_all: pd.DataFrame | None = None) -> Frames:
-    """Strict out-of-time frames: training = rows with date_sold < cutoff; queries are referenced to the cutoff."""
     pos = np.where(train_all["date_sold"] < cutoff)[0]
     tr = train_all.iloc[pos].reset_index(drop=True)
     q = queries.reset_index(drop=True)
@@ -96,7 +89,7 @@ def build_frames(train_all: pd.DataFrame, queries: pd.DataFrame, cutoff: pd.Time
     levels = categorical_levels(tr)
     X_tr = _apply_cats(pd.concat([tr[BASE_COLS], comps_tr], axis=1), levels)
     X_q = _apply_cats(pd.concat([q[BASE_COLS], comps_q], axis=1), levels)
-    ab = addback(V, cutoff, TEST_MONTHS)                                   # [free, condo]
+    ab = addback(V, cutoff, TEST_MONTHS)
     mt = [c for c in META_COLS if c in tr.columns]
     mq = [c for c in META_COLS if c in q.columns]
     return Frames(cutoff=cutoff, X_tr=X_tr, y_tr=detrend_target(tr, V, month_id(cutoff)), pos_tr=pos, X_q=X_q,

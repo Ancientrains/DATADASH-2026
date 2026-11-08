@@ -26,11 +26,11 @@ SUBMISSION_LIST_AWARE = OUT_DIR / "submission_list_aware.csv"
 ID_COL = "ml_num"                                 # ASSUMPTION - confirm against the competition's submission template
 PRED_COL = "sold_price"                           # ASSUMPTION - confirm against the competition's submission template
 
-CACHE_VERSION = "p2-1"                           # bump to invalidate every cached index / comps / block file
-COMPS_VERSION = "2"                               # invalidates only the cached training-row comps
+CACHE_VERSION = "p2-hybrid-1"                     # bump to invalidate every cached index / comps / block file
+COMPS_VERSION = "3"                               # invalidates cached comps to include spatial k-NN and bedroom matches
 RATIO_DAYS = 90                                   # window of the trailing sold/list market ratio
 # Opt-in list-aware feature: trailing median ln(sold/list) of the same segment over the RATIO_DAYS before the reference date
-LIST_MARKET_RATIO = False
+LIST_MARKET_RATIO = True
 SEEDS = (0, 1, 2)
 BASE_MONTH = pd.Timestamp("2021-01-01")          # month id 0 of every index in this project
 TEST_MONTHS = 4                                   # every fold / the final test is a 4-month window
@@ -40,7 +40,7 @@ FOLDS = {                                         # name -> training cutoff (tra
     "F2": pd.Timestamp("2025-10-01"),
     "S25": pd.Timestamp("2025-06-01"),            # headline fold
 }
-# Reference numbers from the handoff document (final 3-seed rows), printed next to validation results: (MdAPE, MAPE) in %
+# Reference numbers from the handoff document (final 3-seed rows): (MdAPE, MAPE) in %
 HANDOFF_REF = {
     "off_market": {"F1": (7.01, 9.30), "F2": (6.78, 9.31), "S25": (7.04, 9.26)},
     "list_aware": {"F1": (3.78, 4.88), "F2": (3.68, 4.68), "S25": (3.91, 4.94)},
@@ -64,7 +64,7 @@ REQUIRED_LIST_AWARE = REQUIRED_BASE + ["list_price", "date_listed"]
 REQUIRED_OFF_MARKET = REQUIRED_BASE
 
 # ------------------------------------------------------------------------------------------------
-# Remark flags: the 22 regexes as supplied (applied to the lower-cased text)
+# Remark flags: the 22 regexes with regex lookbehind fix for 'dated'
 # ------------------------------------------------------------------------------------------------
 KW = {
     "asis": r"as[- ]is\b",
@@ -90,20 +90,28 @@ KW = {
     "locker": r"locker",
     "deep_lot": r"deep \d|deep lot|mature trees",
 }
-# `original` contained the bare substring "dated", which also fires inside "updated" (9% of rows on the training file
-# were flagged only for that reason).  The fix excludes "updated"; set False to restore the pattern exactly as supplied.
+# Negative lookbehind prevents 'dated' from firing inside 'updated'
 FIX_ORIGINAL_PATTERN = True
 if FIX_ORIGINAL_PATTERN:
     KW["original"] = r"original|older|bygone|(?<!up)dated|nostalgic|vintage"
 KW_COLS = [f"kw_{k}" for k in KW]
 
-# kw_cond_score = sum(weight * flag). Weights are the "controlled price impact" column of the handoff table
-# (log-point approximation of the % effect). `motivated` is deliberately absent: its documented effect is on the
-# sold/list ratio, not on price level (it stays available as a raw flag for the list-aware model).
+# Calibrated weights for condition score
 COND_WEIGHTS = {"luxury": 0.070, "updated": 0.028, "stunning": 0.022, "renovated": 0.013, "turnkey": 0.009,
                 "potential": -0.018, "investor": -0.026, "cozy": -0.035, "needs_work": -0.036, "asis": -0.043}
 
 TEXT_FEATS = KW_COLS + ["kw_cond_score", "kw_n", "kw_cond_x_logsqft", "kw_cond_x_condo", "kw_lux_x_logsqft"]
+
+# List-aware-only text options
+LIST_TEXT_MODES = ("none", "a", "b", "ab")
+LA_TEXT_RULES = {
+    "urgency": r"motivated seller|bring all offers|quick closing|must sell|priced to sell",
+    "fixer": r"as[- ]is|handyman|fixer|contractor special|needs (?:work|tlc)|renovator",
+    "premium": r"sub[- ]zero|wolf appliance|custom millwork|marble|quartz|smart home",
+    "scarcity": r"offer date|rarely available|one of a kind|architectural masterpiece",
+    "tenant": r"tenanted|tenant occupied|rental income|currently leased",
+}
+LIST_TEXT_A_COLS = [f"la_text_{k}" for k in LA_TEXT_RULES]
 
 
 # ------------------------------------------------------------------------------------------------
@@ -124,7 +132,7 @@ def to_num(series: pd.Series) -> pd.Series:
 
 
 def parse_area(series: pd.Series):
-    """house_area is either an integer or 'x-y' (|x-y| = 199).  Returns (midpoint sqft, is_range, width)."""
+    """house_area is either an integer or 'x-y'. Returns (midpoint sqft, is_range, width)."""
     t = series.astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     m = t.str.extract(r"^(\d+)(?:\s*-\s*(\d+))?$")
     lo, hi = pd.to_numeric(m[0]), pd.to_numeric(m[1])
@@ -137,7 +145,6 @@ def _cat(series: pd.Series) -> np.ndarray:
 
 
 def _key_part(series: pd.Series) -> pd.Series:
-    """String form of a column for entity keys.  Missing -> 'NA' explicitly (pandas 3's astype(str) would keep NaN)."""
     return pd.Series(series.astype("object").where(series.notna(), "NA").astype(str).values, index=series.index)
 
 
@@ -145,8 +152,6 @@ def _key_part(series: pd.Series) -> pd.Series:
 # Cleaning
 # ------------------------------------------------------------------------------------------------
 def clean(df: pd.DataFrame, required) -> pd.DataFrame:
-    """Raw csv -> tidy frame (RangeIndex).  Post-sale columns that a file happens to contain and the AVM columns are
-    never copied, so they cannot reach a model by accident."""
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"input is missing required columns: {missing}")
@@ -171,27 +176,26 @@ def clean(df: pd.DataFrame, required) -> pd.DataFrame:
     o["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
     o["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
 
-    # entity keys: ml_num is a transaction id; building = exact coordinate, unit = coordinate + physical identity
     ck = _key_part(o["latitude"].round(6)) + "|" + _key_part(o["longitude"].round(6))
     nocoord = o["latitude"].isna() | o["longitude"].isna()
     o["coord_key"] = np.where(nocoord, "NOCOORD_" + o["ml_num"], ck)
     o["unit_key"] = (o["coord_key"] + "|" + o["house_type_name"] + "|" + o["house_style"] + "|"
                      + _key_part(df["bedrooms"]) + "|" + _key_part(df["washrooms"]) + "|" + _key_part(df["house_area"]))
     assert not o["coord_key"].isna().any() and not o["unit_key"].isna().any(), "entity keys must never be missing"
-    o["seg_id"] = o["house_type_name"].isin(CONDO).astype(np.int8)      # 1 = condo, 0 = free(hold)
+    o["seg_id"] = o["house_type_name"].isin(CONDO).astype(np.int8)
 
-    # text
     txt = df["remarks"].fillna("").astype(str)
+    o["remarks"] = txt
     o["remarks_len"] = txt.str.len().astype(float)
     low = txt.str.lower()
     for k, pat in KW.items():
         o[f"kw_{k}"] = low.str.contains(pat, regex=True).astype(np.int8)
     o["kw_cond_score"] = sum(w * o[f"kw_{k}"] for k, w in COND_WEIGHTS.items()).astype(float)
     o["kw_n"] = o[KW_COLS].sum(axis=1).astype(float)
-    logsq = np.log(o["sqft"])
-    o["kw_cond_x_logsqft"] = o["kw_cond_score"] * logsq          # interactions with physical attributes
+    logsq = np.log(np.where(o["sqft"] > 0, o["sqft"], np.nan))
+    o["kw_cond_x_logsqft"] = (o["kw_cond_score"] * logsq).fillna(0.0)
     o["kw_cond_x_condo"] = o["kw_cond_score"] * o["seg_id"]
-    o["kw_lux_x_logsqft"] = o["kw_luxury"] * logsq
+    o["kw_lux_x_logsqft"] = (o["kw_luxury"] * logsq).fillna(0.0)
     return o
 
 
@@ -211,7 +215,7 @@ def load_test_list_aware(path=TEST_LIST_AWARE_CSV) -> pd.DataFrame:
 
 
 def assert_no_leak(columns, track: str):
-    """Guardrail used before every fit/predict.  track in {'off_market', 'list_aware'}."""
+    """Guardrail used before every fit/predict."""
     bad = [c for c in columns if c in POST_SALE_COLS or c in AVM_COLS or "avm" in c]
     if track == "off_market":
         bad += [c for c in columns if "list" in c]
