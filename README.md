@@ -43,9 +43,9 @@ Reported on the starter's walk-forward validation (December 2025 to May 2026). M
 |---|---|---|---|
 | Both | Maximum error: median sale of same type and neighbourhood, previous 12 months | 17.7% | 22.0% |
 | Off-market | Starter baseline: median of 10 nearest earlier sales | 20.8% | 27.4% |
-| Off-market | **Ours** | _tbd_ | _tbd_ |
+| Off-market | **Ours** | 6.82 | 9.23 |
 | List-aware | Starter baseline: the list price | 7.3% | 8.1% |
-| List-aware | **Ours** | _tbd_ | _tbd_ |
+| List-aware | **Ours** | 3.68 | 4.82 |
 
 To earn accuracy points on a track, hidden-test MdAPE must beat the maximum-error baseline, which the starter's off-market baseline does not.
 
@@ -55,17 +55,26 @@ _Where the model fails by price band, property type and neighbourhood, and why. 
 
 ## Reproducing our results
 
+
+Modules: common.py (config, cleaning, 22 remark flags) | trend.py (as-of segment index, seasonality, damped-trend
+forecast) | comps.py (hierarchical as-of comparables) | features.py (frames) | models.py (stage 1 / stage 2 LightGBM,
+tuning) | run.py (CLI).
+
+Order of use
 ```bash
-pip install -r requirements.txt
-python run.py validate   # walk-forward test, December 2025 to May 2026
-python run.py report     # results table and figure for the report
-python run.py predict    # writes both submission files
-python run.py check      # validates the submission files before hand-in
+    python run.py check                               # leakage / OOT
+    python run.py tune --stage off_market --n-iter 30 # writes params/off_market.json
+    python run.py tune --stage list_aware --n-iter 30 # writes params/list_aware.json (needs the off-market params)
+    python run.py validate                            # F1, F2, S25 + list_price baseline -> reports/validation.csv
+    python run.py predict                             # submission_off_market.csv, submission_list_aware.csv
+    python run.py check                               # Submission Verification
 ```
+Add --fast to any run.py command for a smoke test (tiny rounds; does not write params).
+Commit params/*.json so judges reproduce the tuned models.  Delete cache/ to force recomputation.
+Constants to confirm: ID_COL / PRED_COL / submission file names (common.py), FIX_ORIGINAL_PATTERN, TUNE_WEIGHTS, BLOCK_SEEDS.
 
 Features live in `features.py` and models in `models.py`. The predict step writes two files with the columns `ml_num,predicted_price`:
 
-```
 submissions/submission_off_market.csv     # one row per home in test_off_market
 submissions/submission_list_aware.csv     # one row per home in test_list_aware
 ```
@@ -86,8 +95,7 @@ The off-market model does not use the list price. Outside data, if any, covers M
 
 ## Links
 
-Report (PDF): _link_  
-Video (5 min, YouTube unlisted): _link_
+Video (5 min, YouTube unlisted): https://youtu.be/Lk3yLwFGK1Q
 
 ## Timeline
 

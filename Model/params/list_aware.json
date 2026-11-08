@@ -1,0 +1,14 @@
+{
+  "alpha": 0.024413774319837923,
+  "bagging_fraction": 0.9281554834102214,
+  "bagging_freq": 1,
+  "cat_l2": 2.929443538863758,
+  "cat_smooth": 67.08414720097048,
+  "feature_fraction": 0.6180750841875029,
+  "lambda_l2": 11.504996342327553,
+  "learning_rate": 0.03303673950784137,
+  "min_child_samples": 81,
+  "n_rounds": 1500,
+  "num_leaves": 24,
+  "objective": "huber"
+}
