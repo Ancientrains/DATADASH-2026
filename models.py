@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -61,9 +62,9 @@ def price_metrics(actual, pred, house_types=None, test_mix=None) -> dict:
     actual, pred = np.asarray(actual, float), np.asarray(pred, float)
     signed = (pred - actual) / actual
     ape = np.abs(signed)
-    res = dict(n=len(actual), MdAPE=100 * np.median(ape), MAPE=100 * ape.mean(),
+    res = dict(n=len(actual), MdAPE=float(100 * np.median(ape)), MAPE=float(100 * ape.mean()),
                RMSE=float(np.sqrt(np.mean((pred - actual) ** 2))),
-               signed_med=100 * np.median(signed), within10=100 * (ape <= 0.10).mean())
+               signed_med=float(100 * np.median(signed)), within10=float(100 * (ape <= 0.10).mean()))
     if house_types is not None and test_mix is not None:
         try:
             types = pd.Series(house_types)
@@ -201,34 +202,68 @@ def stage2_predict(models, X) -> np.ndarray:
     return np.mean([m.predict(X) for m in models], axis=0)
 
 
-def validate(folds=None, seeds=C.SEEDS, do_list=True, quiet=False, list_text="none"):
+def validate(folds=None, seeds=C.SEEDS, do_list=True, quiet=False, list_text="none", protocol="stress"):
+    """
+    Validate pipeline models.
+    protocol:
+      - 'stress': F1/F2/S25 4-month horizon stress-test folds (default)
+      - 'monthly': Dec 2025 - May 2026 official monthly walk-forward
+    """
     train = C.load_train()
     from trend import get_vintage_index
     V = get_vintage_index(train)
     comps_all = train_comps(train, V)
     p_off, p_list = load_params("off_market"), load_params("list_aware")
     test_mix = get_test_mix()
-    rows, by_type = [], []
 
-    for name, cutoff in C.FOLDS.items():
+    is_monthly = (protocol == "monthly")
+    fold_dict = C.MONTHLY_FOLDS if is_monthly else C.FOLDS
+    test_months = 1 if is_monthly else C.TEST_MONTHS
+
+    rows, by_type, row_preds = [], [], []
+
+    print(f"\n=======================================================")
+    print(f"VALIDATION PROTOCOL: {protocol.upper()} ({'1-month walk-forward' if is_monthly else '4-month stress-test'})")
+    print(f"=======================================================")
+
+    for name, cutoff in fold_dict.items():
         if folds and name not in folds:
             continue
-        print(f"\n[{name}] cutoff {cutoff.date()}")
-        q = fold_queries(train, cutoff)
-        fr = build_frames(train, q, cutoff, V, comps_all=comps_all)
+        print(f"\n[{name}] cutoff {cutoff.date()} (horizon: {test_months}m)")
+        q = fold_queries(train, cutoff, test_months=test_months)
+        fr = build_frames(train, q, cutoff, V, comps_all=comps_all, test_months=test_months)
         t0 = time.time()
         lp_off = stage1_predict(stage1_fit(fr, p_off, seeds), fr.X_q, fr.addback_q)
-        actual, list_price = fr.meta_q["sold_price"].to_numpy(), fr.meta_q["list_price"].to_numpy()
+        actual = fr.meta_q["sold_price"].to_numpy()
+        list_price = fr.meta_q["list_price"].to_numpy()
         ptype = fr.X_q["house_type_name"].astype(str).to_numpy()
+        ml_nums = fr.meta_q["ml_num"].astype(str).to_numpy()
+        pred_off = np.exp(lp_off)
 
-        m_off = price_metrics(actual, np.exp(lp_off), ptype, test_mix)
-        rows.append(dict(fold=name, model="off-market (3 seeds)", **m_off))
-        print(f"  off-market done ({time.time() - t0:.0f}s)")
-        rows.append(dict(fold=name, model="list_price baseline", **price_metrics(actual, list_price, ptype, test_mix)))
+        m_off = price_metrics(actual, pred_off, ptype, test_mix)
+        rows.append(dict(protocol=protocol, fold=name, track="off_market", model="off-market (3 seeds)", **m_off))
+        print(f"  off-market done: MdAPE {m_off['MdAPE']:.2f}%, MAPE {m_off['MAPE']:.2f}% ({time.time() - t0:.0f}s)")
+
+        m_base = price_metrics(actual, list_price, ptype, test_mix)
+        rows.append(dict(protocol=protocol, fold=name, track="list_baseline", model="list_price baseline", **m_base))
+
+        if is_monthly:
+            for i in range(len(actual)):
+                row_preds.append({
+                    "ml_num": ml_nums[i],
+                    "track": "off_market",
+                    "month": name,
+                    "property_type": ptype[i],
+                    "sold_price": actual[i],
+                    "predicted_price": round(float(pred_off[i]), 2),
+                    "list_price": list_price[i],
+                })
 
         pred_la = None
         if do_list:
-            om_all = stage1_blocks(train, V, comps_all, p_off, max_start=cutoff - pd.DateOffset(months=C.TEST_MONTHS))
+            t1 = time.time()
+            max_start = cutoff - pd.DateOffset(months=test_months)
+            om_all = stage1_blocks(train, V, comps_all, p_off, max_start=max_start)
             Xl, yl, text_tr = list_training(fr, om_all, list_text)
             enc = fit_list_text_encoder(text_tr, list_text)
             if "b" in list_text and enc is not None:
@@ -240,102 +275,77 @@ def validate(folds=None, seeds=C.SEEDS, do_list=True, quiet=False, list_text="no
             Xq = list_features(fr.X_q, list_price, lp_off, fr.meta_q["remarks"], list_text, enc)
             pred_la = list_price * np.exp(stage2_predict(models2, Xq))
             m_la = price_metrics(actual, pred_la, ptype, test_mix)
-            rows.append(dict(fold=name, model="list-aware (3 seeds)", **m_la))
-            print(f"  list-aware trained on {len(Xl):,} rows with stage-1 out-of-time valuation")
+            rows.append(dict(protocol=protocol, fold=name, track="list_aware", model="list-aware (3 seeds)", **m_la))
+            print(f"  list-aware done: MdAPE {m_la['MdAPE']:.2f}%, MAPE {m_la['MAPE']:.2f}% ({time.time() - t1:.0f}s)")
+
+            if is_monthly:
+                for i in range(len(actual)):
+                    row_preds.append({
+                        "ml_num": ml_nums[i],
+                        "track": "list_aware",
+                        "month": name,
+                        "property_type": ptype[i],
+                        "sold_price": actual[i],
+                        "predicted_price": round(float(pred_la[i]), 2),
+                        "list_price": list_price[i],
+                    })
 
         for t in sorted(set(ptype)):
             msk = ptype == t
-            by_type.append(dict(fold=name, house_type=t, n=int(msk.sum()),
-                                off_MdAPE=price_metrics(actual[msk], np.exp(lp_off)[msk])["MdAPE"],
+            by_type.append(dict(protocol=protocol, fold=name, house_type=t, n=int(msk.sum()),
+                                off_MdAPE=price_metrics(actual[msk], pred_off[msk])["MdAPE"],
                                 list_MdAPE=price_metrics(actual[msk], pred_la[msk])["MdAPE"] if pred_la is not None else np.nan))
 
     res = pd.DataFrame(rows)
     C.REPORT_DIR.mkdir(exist_ok=True)
-    res.to_csv(C.REPORT_DIR / "validation.csv", index=False)
-    pd.DataFrame(by_type).to_csv(C.REPORT_DIR / "validation_by_type.csv", index=False)
-    if not quiet:
-        print("\n== VALIDATION (MdAPE / MdAPE_testmix / MAPE / RMSE) ==")
-        cols_show = ["fold", "model", "n", "MdAPE"] + (["MdAPE_testmix"] if "MdAPE_testmix" in res else []) + ["MAPE", "RMSE"]
-        print(res[cols_show].round(2).to_string(index=False))
-    return res
 
+    if is_monthly:
+        # Pooled metrics across all 6 months
+        df_p = pd.DataFrame(row_preds)
+        df_p.to_csv(C.MONTHLY_PREDICTIONS_CSV, index=False)
 
-def _sample(rng: np.random.Generator, kind: str) -> dict:
-    lu = lambda a, b: float(np.exp(rng.uniform(np.log(a), np.log(b))))
-    p = dict(
-        objective=str(rng.choice(["regression", "huber"])),
-        learning_rate=lu(0.03, 0.09),
-        num_leaves=int(lu(24, 96)) if kind == "off_market" else int(lu(16, 48)),
-        min_child_samples=int(lu(20, 100)),
-        feature_fraction=float(rng.uniform(0.50, 0.75)),  # Prevents comp greediness
-        bagging_fraction=float(rng.uniform(0.70, 0.95)),
-        bagging_freq=1,
-        lambda_l2=lu(0.5, 30.0),
-        cat_smooth=lu(10, 80),
-        cat_l2=lu(2, 40),
-    )
-    if p["objective"] == "huber":
-        p["alpha"] = float(rng.uniform(0.12, 0.35)) if kind == "off_market" else float(rng.uniform(0.02, 0.08))
-    return p
+        summary_rows = []
+        for track in ["off_market", "list_aware"]:
+            sub = df_p[df_p["track"] == track]
+            if len(sub) == 0:
+                continue
+            for m in sorted(sub["month"].unique()):
+                sm = sub[sub["month"] == m]
+                pm = price_metrics(sm["sold_price"].to_numpy(), sm["predicted_price"].to_numpy(), sm["property_type"].to_numpy(), test_mix)
+                summary_rows.append(dict(protocol="monthly", track=track, month=m, **pm))
+            # Overall pooled across all 6 months
+            po = price_metrics(sub["sold_price"].to_numpy(), sub["predicted_price"].to_numpy(), sub["property_type"].to_numpy(), test_mix)
+            summary_rows.append(dict(protocol="monthly", track=track, month="OVERALL", **po))
 
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df.to_csv(C.MONTHLY_SUMMARY_CSV, index=False)
 
-def tune(kind: str, n_iter: int = 30, seed: int = 0):
-    from trend import get_vintage_index
-    train = C.load_train()
-    V = get_vintage_index(train)
-    comps_all = train_comps(train, V)
-    test_mix = get_test_mix()
-    cks = tuple(c for c in CHECKPOINTS if c <= (150 if FAST else 1800)) or (50, 100, 150)
-    top = max(cks)
-    p_off = load_params("off_market")
-    folds = []
-    for name, cutoff in C.FOLDS.items():
-        fr = build_frames(train, fold_queries(train, cutoff), cutoff, V, verbose=False, comps_all=comps_all)
-        actual = fr.meta_q["sold_price"].to_numpy()
-        ptypes = fr.X_q["house_type_name"].astype(str).to_numpy()
-        item = dict(name=name, fr=fr, actual=actual, types=ptypes)
-        if kind == "list_aware":
-            lp = stage1_predict(stage1_fit(fr, p_off, (0,)), fr.X_q, fr.addback_q)
-            om_all = stage1_blocks(train, V, comps_all, p_off, max_start=cutoff - pd.DateOffset(months=C.TEST_MONTHS), verbose=False)
-            Xl, yl, text_tr = list_training(fr, om_all)
-            lst = fr.meta_q["list_price"].to_numpy()
-            item.update(Xl=Xl, yl=yl, Xq=list_features(fr.X_q, lst, lp), list=lst)
-        folds.append(item)
+        # Provenance JSON
+        try:
+            head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        except Exception:
+            head = "unknown"
 
-    rng = np.random.default_rng(seed)
-    base = load_params(kind)
-    log, best = [], (np.inf, None)
+        meta = {
+            "git_commit": head,
+            "protocol": "monthly",
+            "folds": list(fold_dict.keys()),
+            "seeds": list(seeds),
+            "n_predictions": len(df_p),
+            "summary": summary_df.to_dict(orient="records")
+        }
+        C.MONTHLY_METRICS_JSON.write_text(json.dumps(meta, indent=2))
 
-    for t in range(n_iter):
-        p = {k: v for k, v in base.items() if k != "n_rounds"} if t == 0 else _sample(rng, kind)
-        scores = {k: [] for k in cks}
-        t0 = time.time()
-        for f in folds:
-            X = f["fr"].X_tr[OFF_MARKET_FEATS] if kind == "off_market" else f["Xl"]
-            y = f["fr"].y_tr if kind == "off_market" else f["yl"]
-            Xq = f["fr"].X_q[OFF_MARKET_FEATS] if kind == "off_market" else f["Xq"]
-            b = fit_lgb(X, y, p, 0, rounds=top)
-            for k in cks:
-                pr = b.predict(Xq, num_iteration=k)
-                price = np.exp(pr + f["fr"].addback_q) if kind == "off_market" else f["list"] * np.exp(pr)
-                scores[k].append(price_metrics(f["actual"], price, f["types"], test_mix))
-
-        for k in cks:
-            ms = scores[k]
-            sc = float(np.mean([tune_score(m) for m in ms]))
-            log.append(dict(trial=t, rounds=k, score=sc,
-                            MdAPE=np.mean([m["MdAPE"] for m in ms]),
-                            MdAPE_testmix=np.mean([m.get("MdAPE_testmix", m["MdAPE"]) for m in ms]),
-                            MAPE=np.mean([m["MAPE"] for m in ms]), **p))
-            if sc < best[0]:
-                best = (sc, dict(p, n_rounds=int(k)))
-
-        cur = min(l["score"] for l in log if l["trial"] == t)
-        print(f"  trial {t:>3}/{n_iter}: score {cur:.3f} | best {best[0]:.3f} ({time.time() - t0:.0f}s)", flush=True)
-
-    C.REPORT_DIR.mkdir(exist_ok=True)
-    pd.DataFrame(log).to_csv(C.REPORT_DIR / f"tuning_{kind}.csv", index=False)
-    if not FAST:
-        save_params(kind, best[1])
-    print(f"\nbest {kind} params: {json.dumps(best[1], indent=2)}")
-    return best[1]
+        print("\n=======================================================")
+        print("OFFICIAL MONTHLY WALK-FORWARD SUMMARY (Dec 2025 - May 2026)")
+        print("=======================================================")
+        print(summary_df[["track", "month", "n", "MdAPE", "MAPE", "signed_med", "RMSE"]].round(2).to_string(index=False))
+        return summary_df
+    else:
+        res.to_csv(C.REPORT_DIR / "validation.csv", index=False)
+        pd.DataFrame(by_type).to_csv(C.REPORT_DIR / "validation_by_type.csv", index=False)
+        if not quiet:
+            print("\n== VALIDATION (MdAPE / MdAPE_testmix / MAPE / RMSE) ==")
+            cols_show = ["fold", "model", "n", "MdAPE"] + (["MdAPE_testmix"] if "MdAPE_testmix" in res else []) + ["MAPE", "RMSE"]
+            print(res[cols_show].round(2).to_string(index=False))
+        return res

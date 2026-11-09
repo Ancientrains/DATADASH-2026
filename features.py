@@ -64,18 +64,19 @@ def _apply_cats(X: pd.DataFrame, levels: dict) -> pd.DataFrame:
     return X
 
 
-def window_positions(train_all: pd.DataFrame, cutoff: pd.Timestamp) -> np.ndarray:
-    end = cutoff + pd.DateOffset(months=TEST_MONTHS)
+def window_positions(train_all: pd.DataFrame, cutoff: pd.Timestamp, test_months: int = TEST_MONTHS) -> np.ndarray:
+    end = cutoff + pd.DateOffset(months=test_months)
     d = train_all["date_sold"]
     return np.where((d >= cutoff) & (d < end))[0]
 
 
-def fold_queries(train_all: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
-    return train_all.iloc[window_positions(train_all, cutoff)].reset_index(drop=True)
+def fold_queries(train_all: pd.DataFrame, cutoff: pd.Timestamp, test_months: int = TEST_MONTHS) -> pd.DataFrame:
+    return train_all.iloc[window_positions(train_all, cutoff, test_months=test_months)].reset_index(drop=True)
 
 
 def build_frames(train_all: pd.DataFrame, queries: pd.DataFrame, cutoff: pd.Timestamp, V: np.ndarray,
-                 track=None, verbose: bool = True, comps_all: pd.DataFrame | None = None) -> Frames:
+                 track=None, verbose: bool = True, comps_all: pd.DataFrame | None = None,
+                 test_months: int = TEST_MONTHS) -> Frames:
     pos = np.where(train_all["date_sold"] < cutoff)[0]
     tr = train_all.iloc[pos].reset_index(drop=True)
     q = queries.reset_index(drop=True)
@@ -89,7 +90,7 @@ def build_frames(train_all: pd.DataFrame, queries: pd.DataFrame, cutoff: pd.Time
     levels = categorical_levels(tr)
     X_tr = _apply_cats(pd.concat([tr[BASE_COLS], comps_tr], axis=1), levels)
     X_q = _apply_cats(pd.concat([q[BASE_COLS], comps_q], axis=1), levels)
-    ab = addback(V, cutoff, TEST_MONTHS)
+    ab = addback(V, cutoff, test_months)
     mt = [c for c in META_COLS if c in tr.columns]
     mq = [c for c in META_COLS if c in q.columns]
     return Frames(cutoff=cutoff, X_tr=X_tr, y_tr=detrend_target(tr, V, month_id(cutoff)), pos_tr=pos, X_q=X_q,

@@ -71,6 +71,20 @@ def check() -> int:
         except AssertionError as e:
             ok(False, str(e))
     ok(not any("list" in c for c in OFF_MARKET_FEATS), "no list-price column in the off-market feature list")
+    ok(not any("sold" in c for c in OFF_MARKET_FEATS), "no sold-price column in the off-market feature list")
+
+    print("\n== monthly protocol temporal integrity ==")
+    train = C.load_train()
+    for name, cutoff in C.MONTHLY_FOLDS.items():
+        tr_pos = np.where(train["date_sold"] < cutoff)[0]
+        q_pos = M.window_positions(train, cutoff, test_months=1)
+        ok(len(tr_pos) > 0, f"monthly fold {name}: {len(tr_pos):,} training sales (< cutoff)")
+        ok(len(q_pos) > 0, f"monthly fold {name}: {len(q_pos):,} query sales in month")
+        ok((train["date_sold"].iloc[tr_pos] < cutoff).all(), f"monthly fold {name}: 0 training rows >= cutoff")
+        q_dates = train["date_sold"].iloc[q_pos]
+        ok((q_dates >= cutoff).all() and (q_dates < cutoff + pd.DateOffset(months=1)).all(),
+           f"monthly fold {name}: query dates strictly in calendar month")
+
     print("\n== determinism ==")
     ok(_determinism(), "two LightGBM fits with the same seed give identical predictions")
     print("\nALL CHECKS PASSED" if not bad else f"\n{len(bad)} CHECK(S) FAILED")
@@ -80,7 +94,9 @@ def check() -> int:
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["validate", "tune", "predict", "check"])
-    ap.add_argument("--folds", nargs="*", help="subset of F1 F2 S25 (validate)")
+    ap.add_argument("--folds", nargs="*", help="subset of folds to validate")
+    ap.add_argument("--protocol", choices=["stress", "monthly"], default="stress",
+                    help="validation protocol: 'stress' (F1/F2/S25 4-month folds, default) or 'monthly' (Dec 2025 - May 2026 walk-forward)")
     ap.add_argument("--no-list", action="store_true", help="skip the list-aware stack (validate)")
     ap.add_argument("--stage", choices=["off_market", "list_aware"], default="off_market", help="what to tune")
     ap.add_argument("--n-iter", type=int, default=30)
@@ -89,7 +105,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     M.FAST = a.fast
     if a.command == "validate":
-        M.validate(a.folds, do_list=not a.no_list, list_text=a.list_text)
+        M.validate(a.folds, do_list=not a.no_list, list_text=a.list_text, protocol=a.protocol)
     elif a.command == "tune":
         M.tune(a.stage, a.n_iter)
     elif a.command == "predict":

@@ -47,6 +47,19 @@ HANDOFF_REF = {
 }
 CONDO = {"Condo Apt", "Co-Op Apt", "Condo Townhouse"}
 
+# --- Model/common.py additions ---
+MONTHLY_FOLDS = {
+    "2025-12": pd.Timestamp("2025-12-01"),
+    "2026-01": pd.Timestamp("2026-01-01"),
+    "2026-02": pd.Timestamp("2026-02-01"),
+    "2026-03": pd.Timestamp("2026-03-01"),
+    "2026-04": pd.Timestamp("2026-04-01"),
+    "2026-05": pd.Timestamp("2026-05-01"),
+}
+MONTHLY_PREDICTIONS_CSV = REPORT_DIR / "monthly_predictions.csv"
+MONTHLY_SUMMARY_CSV = REPORT_DIR / "monthly_summary.csv"
+MONTHLY_METRICS_JSON = REPORT_DIR / "monthly_metrics.json"
+
 
 def seg(df):
     """Market segment label, exactly as specified."""

@@ -43,9 +43,9 @@ Reported on the starter's walk-forward validation (December 2025 to May 2026). M
 |---|---|---|---|
 | Both | Maximum error: median sale of same type and neighbourhood, previous 12 months | 17.7% | 22.0% |
 | Off-market | Starter baseline: median of 10 nearest earlier sales | 20.8% | 27.4% |
-| Off-market | **Ours** | 6.82 | 9.23 |
+| Off-market | **Ours(Final)** | 6.75 | 9.01 |
 | List-aware | Starter baseline: the list price | 7.3% | 8.1% |
-| List-aware | **Ours** | 3.68 | 4.82 |
+| List-aware | **Ours(Final)** | 3.67 | 4.71 |
 
 To earn accuracy points on a track, hidden-test MdAPE must beat the maximum-error baseline, which the starter's off-market baseline does not.
 
@@ -65,7 +65,8 @@ Order of use
     python run.py check                               # leakage / OOT
     python run.py tune --stage off_market --n-iter 30 # writes params/off_market.json
     python run.py tune --stage list_aware --n-iter 30 # writes params/list_aware.json (needs the off-market params)
-    python run.py validate                            # F1, F2, S25 + list_price baseline -> reports/validation.csv
+    python run.py validate --protocol monthly         # Run official monthly walk-forward  -> reports/validation.csv
+    python run.py validate --protocol stress          # F1, F2, S25 + list_price baseline -> reports/validation.csv
     python run.py predict                             # submission_off_market.csv, submission_list_aware.csv
     python run.py check                               # Submission Verification
 ```
