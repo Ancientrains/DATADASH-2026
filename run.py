@@ -14,6 +14,7 @@ from trend import get_vintage_index
 
 def _write(df_ids: pd.Series, price: np.ndarray, path):
     out = pd.DataFrame({C.ID_COL: df_ids.to_numpy(), C.PRED_COL: np.round(price, 0)})
+    path.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False)
     print(f"  wrote {path}  ({len(out):,} rows, median {out[C.PRED_COL].median():,.0f})")
 
@@ -58,6 +59,30 @@ def _determinism() -> bool:
     return bool(np.array_equal(pr[0], pr[1]))
 
 
+def _check_submission(path, expected_ids: pd.Series) -> list[str]:
+    """Return contract failures for one competition submission file."""
+    if not path.exists():
+        return [f"{path}: file is missing (run `python run.py predict`)"]
+    try:
+        submission = pd.read_csv(path)
+    except Exception as exc:
+        return [f"{path}: cannot read CSV ({exc})"]
+
+    errors = []
+    expected_columns = [C.ID_COL, C.PRED_COL]
+    if list(submission.columns) != expected_columns:
+        errors.append(f"{path}: columns must be exactly {expected_columns}, got {list(submission.columns)}")
+        return errors
+    if submission[C.ID_COL].isna().any() or submission[C.ID_COL].duplicated().any():
+        errors.append(f"{path}: IDs must be present and unique")
+    if len(submission) != len(expected_ids) or set(submission[C.ID_COL]) != set(expected_ids):
+        errors.append(f"{path}: IDs must match the corresponding test file exactly")
+    prices = pd.to_numeric(submission[C.PRED_COL], errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(prices).all() or (prices <= 0).any():
+        errors.append(f"{path}: predictions must be finite, positive numbers")
+    return errors
+
+
 def check() -> int:
     bad = []
     def ok(cond, msg):
@@ -87,6 +112,16 @@ def check() -> int:
 
     print("\n== determinism ==")
     ok(_determinism(), "two LightGBM fits with the same seed give identical predictions")
+
+    print("\n== submission contract ==")
+    for path, test in ((C.SUBMISSION_OFF_MARKET, C.load_test_off_market()),
+                       (C.SUBMISSION_LIST_AWARE, C.load_test_list_aware())):
+        errors = _check_submission(path, test[C.ID_COL])
+        ok(not errors, f"{path}: IDs and positive `{C.PRED_COL}` values match its test file")
+        for error in errors:
+            if error not in bad:
+                bad.append(error)
+                print(f"        {error}")
     print("\nALL CHECKS PASSED" if not bad else f"\n{len(bad)} CHECK(S) FAILED")
     return 1 if bad else 0
 

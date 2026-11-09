@@ -20,11 +20,11 @@ TEST_OFF_MARKET_CSV = DATA_DIR / "test_off_market.csv"
 CACHE_DIR = Path("cache")
 PARAMS_DIR = Path("params")                       # tuned LightGBM parameters (commit these for reproducibility)
 REPORT_DIR = Path("reports")
-OUT_DIR = Path(".")
+OUT_DIR = Path("submissions")
 SUBMISSION_OFF_MARKET = OUT_DIR / "submission_off_market.csv"
 SUBMISSION_LIST_AWARE = OUT_DIR / "submission_list_aware.csv"
-ID_COL = "ml_num"                                 # ASSUMPTION - confirm against the competition's submission template
-PRED_COL = "sold_price"                           # ASSUMPTION - confirm against the competition's submission template
+ID_COL = "ml_num"                                 # competition submission-template identifier
+PRED_COL = "predicted_price"                      # competition submission-template column
 
 CACHE_VERSION = "p2-hybrid-1"                     # bump to invalidate every cached index / comps / block file
 COMPS_VERSION = "3"                               # invalidates cached comps to include spatial k-NN and bedroom matches
