@@ -16,7 +16,7 @@ Test frames have sold_price/date_sold/days_on_market/external_avm_* REMOVED, and
 
 import re, numpy as np, pandas as pd
 import os
-DATA = os.environ.get("DATADASH_DATA", "data")  # folder holding listings/test_*.parquet
+DATA = os.environ.get("DATADASH_DATA", "data")  # folder holding listings/test_*.csv
 FOLDS = {"F1": ("2026-02-01", "2026-05-31"), "F2": ("2025-10-01", "2026-01-31")}
 OFF_COLS = ['ml_num','date_listed','house_type_name','house_style','bedrooms','washrooms','parking_total','garage',
             'house_area','lot_front','lot_depth','municipality','community','latitude','longitude','remarks']
@@ -25,7 +25,9 @@ _cache = {}
 
 def load(name="listings"):
     if name not in _cache:
-        d = pd.read_parquet(f"../{DATA}/{name}.parquet")
+        # CSV is the portable release format.  It avoids requiring Git LFS
+        # and sidesteps Parquet-engine version compatibility in judge images.
+        d = pd.read_csv(f"../{DATA}/{name}.csv")
         for c in ("date_listed", "date_sold", "external_avm_estimate_date"):
             if c in d: d[c] = pd.to_datetime(d[c])
         _cache[name] = d
